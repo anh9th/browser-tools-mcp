@@ -31,13 +31,130 @@ const server = new McpServer({
 
 const PORT = 3025;
 
-// Create logs directory for storing resource files
-// Use the specific test path requested
-const logsDir = "D:\\hps-deploy\\mcp-logs";
+// Function to get the logs directory from browser connector settings
+async function getLogsDirectory(): Promise<string> {
+  // Try multiple times with a delay between attempts
+  const maxRetries = 3;
+  let retryCount = 0;
+
+  while (retryCount < maxRetries) {
+    try {
+      // Try to get the settings from the browser connector
+      console.log(`Attempt ${retryCount + 1}/${maxRetries} to fetch settings from browser connector`);
+      const response = await fetch(`http://127.0.0.1:${PORT}/settings`, {
+        method: "GET",
+      });
+
+      if (response.ok) {
+        const settings = await response.json();
+        console.log("Retrieved settings from browser connector:", settings);
+        if (settings && settings.logsDirectory && settings.logsDirectory.trim() !== '') {
+          console.log(`Using logs directory from settings: ${settings.logsDirectory}`);
+          return settings.logsDirectory;
+        } else {
+          console.log("Logs directory setting is empty or not set");
+        }
+      } else {
+        console.log(`Failed to get settings, status: ${response.status}`);
+      }
+    } catch (error) {
+      console.error(`Attempt ${retryCount + 1}/${maxRetries} failed:`, error);
+    }
+
+    // Wait before retrying
+    if (retryCount < maxRetries - 1) {
+      console.log("Waiting 2 seconds before retrying...");
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    retryCount++;
+  }
+
+  // Fallback options in order:
+  // 1. Default platform-specific location
+  const homeDir = os.homedir();
+  const defaultLogsPath = path.join(homeDir, "Downloads", "mcp-logs");
+
+  // 2. Use the hardcoded path as last resort
+  const hardcodedPath = "D:\\hps-deploy\\mcp-logs";
+
+  // Check if default path exists/is writable
+  try {
+    await fs.promises.access(defaultLogsPath, fs.constants.W_OK);
+    console.log(`Using default logs path: ${defaultLogsPath}`);
+    return defaultLogsPath;
+  } catch (err) {
+    console.log(`Default logs path ${defaultLogsPath} not accessible, using hardcoded path.`);
+    return hardcodedPath;
+  }
+}
+
+// Function to periodically check for settings updates
+function startSettingsSync() {
+  // Initial settings check
+  syncSettings();
+
+  // Check for settings updates every 30 seconds
+  setInterval(syncSettings, 30000);
+}
+
+// Function to sync settings from the browser connector
+async function syncSettings() {
+  try {
+    const response = await fetch(`http://127.0.0.1:${PORT}/settings`, {
+      method: "GET",
+    });
+
+    if (response.ok) {
+      const settings = await response.json();
+      if (settings && settings.logsDirectory && settings.logsDirectory.trim() !== '') {
+        // Only update if the directory has changed
+        if (settings.logsDirectory !== logsDir) {
+          console.log(`Updating logs directory from ${logsDir} to ${settings.logsDirectory}`);
+          logsDir = settings.logsDirectory;
+
+          // Create the directory if it doesn't exist
+          if (!fs.existsSync(logsDir)) {
+            fs.mkdirSync(logsDir, { recursive: true });
+            console.log(`Created logs directory: ${logsDir}`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error syncing settings:", error);
+  }
+}
+
+// Initialize with a default path that will be overwritten
+let logsDir = path.join(os.homedir(), "Downloads", "mcp-logs");
+// Create the directory initially to ensure it exists
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
-console.log(`Using logs directory: ${logsDir}`);
+
+// Update to the configured path asynchronously
+getLogsDirectory().then(dir => {
+  logsDir = dir;
+  console.log(`Using logs directory: ${logsDir}`);
+
+  // Create the directory if it doesn't exist
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+
+  // Start periodic settings synchronization
+  startSettingsSync();
+}).catch(err => {
+  console.error("Error setting up logs directory:", err);
+  // Fallback to hardcoded path in case of error
+  logsDir = "D:\\hps-deploy\\mcp-logs";
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+
+  // Start periodic settings synchronization even after error
+  startSettingsSync();
+});
 
 // Helper function to create proper file:// URIs
 function pathToFileUri(filePath: string): string {

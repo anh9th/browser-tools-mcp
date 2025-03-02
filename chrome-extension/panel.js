@@ -8,6 +8,7 @@ let settings = {
   filterSameDomain: true,
   maxLogSize: 50000000,
   screenshotPath: "",
+  logsDirectory: "",
 };
 
 // Load saved settings on startup
@@ -31,6 +32,7 @@ const showResponseHeadersCheckbox = document.getElementById(
 const filterSameDomainCheckbox = document.getElementById("filter-same-domain");
 const maxLogSizeInput = document.getElementById("max-log-size");
 const screenshotPathInput = document.getElementById("screenshot-path");
+const logsDirectoryInput = document.getElementById("logs-directory");
 const captureScreenshotButton = document.getElementById("capture-screenshot");
 
 // Initialize collapsible advanced settings
@@ -57,6 +59,7 @@ function updateUIFromSettings() {
   filterSameDomainCheckbox.checked = settings.filterSameDomain;
   maxLogSizeInput.value = settings.maxLogSize;
   screenshotPathInput.value = settings.screenshotPath;
+  logsDirectoryInput.value = settings.logsDirectory;
 }
 
 // Save settings
@@ -67,6 +70,29 @@ function saveSettings() {
     type: "SETTINGS_UPDATED",
     settings,
   });
+
+  // Directly sync settings with the browser-connector server
+  syncSettingsWithServer();
+}
+
+// Function to sync settings with the browser-connector server
+function syncSettingsWithServer() {
+  // Use the dedicated settings endpoint
+  fetch("http://127.0.0.1:3025/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`Failed to sync settings: ${response.status}`);
+      }
+      console.log("Settings synced with browser-connector server");
+      return response.json();
+    })
+    .catch(error => {
+      console.error("Failed to sync settings with server:", error);
+    });
 }
 
 // Add event listeners for all inputs
@@ -107,6 +133,11 @@ maxLogSizeInput.addEventListener("change", (e) => {
 
 screenshotPathInput.addEventListener("change", (e) => {
   settings.screenshotPath = e.target.value;
+  saveSettings();
+});
+
+logsDirectoryInput.addEventListener("change", (e) => {
+  settings.logsDirectory = e.target.value;
   saveSettings();
 });
 

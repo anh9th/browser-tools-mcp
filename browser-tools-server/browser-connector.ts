@@ -19,6 +19,14 @@ function getDefaultDownloadsFolder(): string {
   return downloadsPath;
 }
 
+// Function to get default logs folder
+function getDefaultLogsFolder(): string {
+  const homeDir = os.homedir();
+  // Logs folder in the same directory as downloads
+  const logsPath = path.join(homeDir, "Downloads", "mcp-logs");
+  return logsPath;
+}
+
 // We store logs in memory
 const consoleLogs: any[] = [];
 const consoleErrors: any[] = [];
@@ -37,6 +45,7 @@ let currentSettings = {
   stringSizeLimit: 50000000,
   maxLogSize: 50000000,
   screenshotPath: getDefaultDownloadsFolder(),
+  logsDirectory: getDefaultLogsFolder(),
 };
 
 // Add new storage for selected element
@@ -440,6 +449,32 @@ app.post("/wipelogs", (req, res) => {
   clearAllLogs();
   res.json({ status: "ok", message: "All logs cleared successfully" });
 });
+
+// Add endpoint to get current settings and update settings
+app.route("/settings")
+  .get((req, res) => {
+    console.log("Fetching settings");
+    res.json(currentSettings);
+  })
+  .post((req, res) => {
+    console.log("Received settings update request");
+    const newSettings = req.body;
+
+    if (!newSettings) {
+      console.log("No settings provided in update request");
+      res.status(400).json({ status: "error", message: "No settings provided" });
+      return;
+    }
+
+    console.log("Updating settings:", newSettings);
+    currentSettings = {
+      ...currentSettings,
+      ...newSettings,
+    };
+
+    console.log("Settings updated successfully");
+    res.json({ status: "ok", settings: currentSettings });
+  });
 
 interface ScreenshotMessage {
   type: "screenshot-data" | "screenshot-error";

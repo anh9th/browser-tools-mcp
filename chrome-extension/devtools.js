@@ -10,6 +10,7 @@ let settings = {
   showResponseHeaders: false,
   filterSameDomain: true, // Add new setting for filtering network logs to same domain
   screenshotPath: "", // Add new setting for screenshot path
+  logsDirectory: "", // Add new setting for logs directory
 };
 
 // Keep track of debugger state
@@ -294,6 +295,10 @@ function sendToBrowserConnector(logData) {
       showRequestHeaders: settings.showRequestHeaders,
       showResponseHeaders: settings.showResponseHeaders,
       filterSameDomain: settings.filterSameDomain,
+      stringSizeLimit: settings.stringSizeLimit,
+      maxLogSize: settings.maxLogSize,
+      screenshotPath: settings.screenshotPath,
+      logsDirectory: settings.logsDirectory,
     },
   };
 
