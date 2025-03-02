@@ -2,12 +2,13 @@
 
 // Store settings with defaults
 let settings = {
-  logLimit: 50,
-  queryLimit: 30000,
-  stringSizeLimit: 500,
-  maxLogSize: 20000,
+  logLimit: 500,
+  queryLimit: 3000000,
+  stringSizeLimit: 50000000,
+  maxLogSize: 50000000,
   showRequestHeaders: false,
   showResponseHeaders: false,
+  filterSameDomain: true, // Add new setting for filtering network logs to same domain
   screenshotPath: "", // Add new setting for screenshot path
 };
 
@@ -18,12 +19,73 @@ const currentTabId = chrome.devtools.inspectedWindow.tabId;
 const MAX_ATTACH_RETRIES = 3;
 const ATTACH_RETRY_DELAY = 1000; // 1 second
 
+// Track the current tab's hostname for domain filtering
+let currentHostname = "";
+
 // Load saved settings on startup
 chrome.storage.local.get(["browserConnectorSettings"], (result) => {
   if (result.browserConnectorSettings) {
     settings = { ...settings, ...result.browserConnectorSettings };
   }
 });
+
+// Get the current hostname on startup and whenever the page navigates
+function updateCurrentHostname() {
+  console.log("Updating current hostname...");
+
+  // Method 1: Try to get hostname from window.location
+  chrome.devtools.inspectedWindow.eval(
+    "window.location.hostname",
+    (hostname, isException) => {
+      if (!isException && hostname) {
+        console.log("Retrieved hostname from window.location:", hostname);
+        currentHostname = hostname;
+        return;
+      }
+
+      console.log("Could not get hostname from window.location, trying document.domain...");
+
+      // Method 2: Try to get from document.domain
+      chrome.devtools.inspectedWindow.eval(
+        "document.domain",
+        (domain, isException2) => {
+          if (!isException2 && domain) {
+            console.log("Retrieved hostname from document.domain:", domain);
+            currentHostname = domain;
+            return;
+          }
+
+          console.log("Could not get hostname from document.domain, trying document.URL...");
+
+          // Method 3: Try to extract from document.URL
+          chrome.devtools.inspectedWindow.eval(
+            "document.URL",
+            (url, isException3) => {
+              if (!isException3 && url) {
+                try {
+                  const urlObj = new URL(url);
+                  console.log("Extracted hostname from document.URL:", urlObj.hostname);
+                  currentHostname = urlObj.hostname;
+                  return;
+                } catch (e) {
+                  console.error("Error extracting hostname from URL:", e);
+                }
+              }
+
+              console.log("Warning: Could not determine current hostname");
+            }
+          );
+        }
+      );
+    }
+  );
+}
+
+// Initial hostname capture
+updateCurrentHostname();
+
+// Set timer to periodically update hostname in case it changes without a navigation event
+setInterval(updateCurrentHostname, 30000); // Update every 30 seconds
 
 // Listen for settings updates
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -175,8 +237,11 @@ function sendToBrowserConnector(logData) {
   // Process any string fields that might contain JSON
   const processedData = { ...logData };
 
+  // For network requests, add the current hostname for filtering
   if (logData.type === "network-request") {
     console.log("Processing network request");
+    processedData.currentHostname = currentHostname;
+
     if (processedData.requestBody) {
       console.log(
         "Request body size before:",
@@ -228,6 +293,7 @@ function sendToBrowserConnector(logData) {
       queryLimit: settings.queryLimit,
       showRequestHeaders: settings.showRequestHeaders,
       showResponseHeaders: settings.showResponseHeaders,
+      filterSameDomain: settings.filterSameDomain,
     },
   };
 
@@ -276,6 +342,9 @@ function wipeLogs() {
 chrome.devtools.network.onNavigated.addListener(() => {
   console.log("Page navigated/refreshed - wiping logs");
   wipeLogs();
+
+  // Update hostname when page navigates
+  updateCurrentHostname();
 });
 
 // 1) Listen for network requests

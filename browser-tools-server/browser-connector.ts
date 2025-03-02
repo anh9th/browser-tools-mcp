@@ -28,13 +28,14 @@ const allXhr: any[] = [];
 
 // Add settings state
 let currentSettings = {
-  logLimit: 50,
-  queryLimit: 30000,
+  logLimit: 500,
+  queryLimit: 3000000,
   showRequestHeaders: false,
   showResponseHeaders: false,
+  filterSameDomain: true,
   model: "claude-3-sonnet",
-  stringSizeLimit: 500,
-  maxLogSize: 20000,
+  stringSizeLimit: 50000000,
+  maxLogSize: 50000000,
   screenshotPath: getDefaultDownloadsFolder(),
 };
 
@@ -95,23 +96,97 @@ function processJsonString(jsonString: string, maxLength: number): string {
   }
 }
 
+// Helper function to check if URL belongs to same domain
+function isSameDomain(url: string, hostname: string): boolean {
+  if (!url) return false;
+
+  try {
+    const urlObj = new URL(url);
+
+    // If hostname is provided, use it for comparison
+    if (hostname) {
+      return urlObj.hostname === hostname;
+    }
+
+    // If hostname is not provided, we need another way to determine the main domain
+    // This is a fallback approach
+    return true; // Default to keeping the log if we can't determine
+  } catch (e) {
+    console.error(`Error parsing URL ${url}:`, e);
+    return false;
+  }
+}
+
+// Helper to extract hostname from URL
+function extractHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch (e) {
+    return "";
+  }
+}
+
 // Helper to process logs based on settings
 function processLogsWithSettings(logs: any[]) {
-  return logs.map((log) => {
-    const processedLog = { ...log };
+  // First, try to find the main hostname from the logs if needed
+  let mainHostname = "";
 
-    if (log.type === "network-request") {
-      // Handle headers visibility
-      if (!currentSettings.showRequestHeaders) {
-        delete processedLog.requestHeaders;
-      }
-      if (!currentSettings.showResponseHeaders) {
-        delete processedLog.responseHeaders;
+  // If we need to filter by domain and have network requests
+  if (currentSettings.filterSameDomain) {
+    // Try to find the main hostname by looking at the URLs in the logs
+    // The most common hostname across logs is likely the main one
+    const hostnameCount: Record<string, number> = {};
+
+    for (const log of logs) {
+      if (log.type === "network-request" && log.url) {
+        const hostname = extractHostname(log.url);
+        if (hostname) {
+          hostnameCount[hostname] = (hostnameCount[hostname] || 0) + 1;
+        }
       }
     }
 
-    return processedLog;
-  });
+    // Find the most common hostname
+    let maxCount = 0;
+    for (const [hostname, count] of Object.entries(hostnameCount)) {
+      if (count > maxCount) {
+        maxCount = count;
+        mainHostname = hostname;
+      }
+    }
+
+    console.log(`Determined main hostname: ${mainHostname} (found in ${maxCount} logs)`);
+  }
+
+  return logs
+    .filter(log => {
+      // Apply domain filtering if enabled
+      if (currentSettings.filterSameDomain && log.type === "network-request") {
+        // Use log.currentHostname if available, otherwise use our determined mainHostname
+        const referenceHostname = log.currentHostname || mainHostname;
+
+        if (!isSameDomain(log.url, referenceHostname)) {
+          console.log(`Filtering out third-party request: ${log.url} (reference hostname: ${referenceHostname})`);
+          return false;
+        }
+      }
+      return true;
+    })
+    .map(log => {
+      const processedLog = { ...log };
+
+      if (log.type === "network-request") {
+        // Handle headers visibility
+        if (!currentSettings.showRequestHeaders) {
+          delete processedLog.requestHeaders;
+        }
+        if (!currentSettings.showResponseHeaders) {
+          delete processedLog.responseHeaders;
+        }
+      }
+
+      return processedLog;
+    });
 }
 
 // Helper to calculate size of a log entry
@@ -219,6 +294,33 @@ app.post("/extension-log", (req, res) => {
       };
       console.log("Adding network request:", logEntry);
 
+      // If currentHostname is not provided, try to extract it from the referer header
+      if (!data.currentHostname && data.requestHeaders) {
+        const referer = data.requestHeaders.find((h: any) =>
+          h.name.toLowerCase() === 'referer' || h.name.toLowerCase() === 'referrer'
+        );
+
+        if (referer && referer.value) {
+          try {
+            const refererUrl = new URL(referer.value);
+            data.currentHostname = refererUrl.hostname;
+            console.log(`Extracted hostname from referer: ${data.currentHostname}`);
+          } catch (e) {
+            console.error(`Failed to extract hostname from referer: ${referer.value}`, e);
+          }
+        }
+      }
+
+      // Extract hostname from URL as a fallback
+      if (!data.currentHostname && data.url) {
+        try {
+          data.currentHostname = extractHostname(data.url);
+          console.log(`Extracted hostname from URL: ${data.currentHostname}`);
+        } catch (e) {
+          console.error(`Failed to extract hostname from URL: ${data.url}`, e);
+        }
+      }
+
       // Route network requests based on status code
       if (data.status >= 400) {
         networkErrors.push(data);
@@ -273,12 +375,20 @@ app.get("/console-errors", (req, res) => {
 });
 
 app.get("/network-errors", (req, res) => {
-  const truncatedLogs = truncateLogsToQueryLimit(networkErrors);
+  // Apply settings-based processing, including domain filtering
+  const processedLogs = processLogsWithSettings(networkErrors);
+  // Then apply size limits
+  const truncatedLogs = truncateLogsToQueryLimit(processedLogs);
+  console.log(`Returning ${truncatedLogs.length} network error logs ${currentSettings.filterSameDomain ? "(with same-domain filtering)" : ""}`);
   res.json(truncatedLogs);
 });
 
 app.get("/network-success", (req, res) => {
-  const truncatedLogs = truncateLogsToQueryLimit(networkSuccess);
+  // Apply settings-based processing, including domain filtering
+  const processedLogs = processLogsWithSettings(networkSuccess);
+  // Then apply size limits
+  const truncatedLogs = truncateLogsToQueryLimit(processedLogs);
+  console.log(`Returning ${truncatedLogs.length} network success logs ${currentSettings.filterSameDomain ? "(with same-domain filtering)" : ""}`);
   res.json(truncatedLogs);
 });
 
@@ -287,7 +397,14 @@ app.get("/all-xhr", (req, res) => {
   const mergedLogs = [...networkSuccess, ...networkErrors].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
-  const truncatedLogs = truncateLogsToQueryLimit(mergedLogs);
+
+  // Apply settings-based processing including domain filtering
+  const processedLogs = processLogsWithSettings(mergedLogs);
+
+  // Apply size-based truncation
+  const truncatedLogs = truncateLogsToQueryLimit(processedLogs);
+
+  console.log(`Returning ${truncatedLogs.length} network logs ${currentSettings.filterSameDomain ? "(with same-domain filtering)" : ""}`);
   res.json(truncatedLogs);
 });
 

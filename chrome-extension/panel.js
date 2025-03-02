@@ -1,11 +1,12 @@
 // Store settings
 let settings = {
-  logLimit: 50,
-  queryLimit: 30000,
-  stringSizeLimit: 500,
+  logLimit: 500,
+  queryLimit: 3000000,
+  stringSizeLimit: 50000000,
   showRequestHeaders: false,
   showResponseHeaders: false,
-  maxLogSize: 20000,
+  filterSameDomain: true,
+  maxLogSize: 50000000,
   screenshotPath: "",
 };
 
@@ -27,6 +28,7 @@ const showRequestHeadersCheckbox = document.getElementById(
 const showResponseHeadersCheckbox = document.getElementById(
   "show-response-headers"
 );
+const filterSameDomainCheckbox = document.getElementById("filter-same-domain");
 const maxLogSizeInput = document.getElementById("max-log-size");
 const screenshotPathInput = document.getElementById("screenshot-path");
 const captureScreenshotButton = document.getElementById("capture-screenshot");
@@ -52,6 +54,7 @@ function updateUIFromSettings() {
   stringSizeLimitInput.value = settings.stringSizeLimit;
   showRequestHeadersCheckbox.checked = settings.showRequestHeaders;
   showResponseHeadersCheckbox.checked = settings.showResponseHeaders;
+  filterSameDomainCheckbox.checked = settings.filterSameDomain;
   maxLogSizeInput.value = settings.maxLogSize;
   screenshotPathInput.value = settings.screenshotPath;
 }
@@ -89,6 +92,11 @@ showRequestHeadersCheckbox.addEventListener("change", (e) => {
 
 showResponseHeadersCheckbox.addEventListener("change", (e) => {
   settings.showResponseHeaders = e.target.checked;
+  saveSettings();
+});
+
+filterSameDomainCheckbox.addEventListener("change", (e) => {
+  settings.filterSameDomain = e.target.checked;
   saveSettings();
 });
 
